@@ -22,6 +22,7 @@ class VASatelliteDevice(SatelliteDevice):
     info: Info | None = None
     custom_settings: dict[str, Any] | None = None
     capabilities: dict[str, Any] | None = None
+    wakeword_engine: str | None = None
 
     _custom_settings_listener: Callable[[str | None, Any | None], None] | None = None
     _custom_action_listener: Callable[[Any, Any], None] | None = None
