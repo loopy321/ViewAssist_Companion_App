@@ -1,7 +1,7 @@
 """Constants for the Wyoming integration."""
 
 DOMAIN = "vaca"
-MIN_APK_VERSION = "0.9.2"
+MIN_APK_VERSION = "0.10.0"
 
 SAMPLE_RATE = 16000
 SAMPLE_WIDTH = 2
