@@ -289,6 +289,7 @@ internal class BackgroundTaskController (private val context: Context): EventLis
     @RequiresPermission(Manifest.permission.RECORD_AUDIO)
     fun runWakeWordDetection() {
         wakeWordJob = scope.launch {
+            delay(1000L)
             engine = WakeWordEngine(context,  if (config.wakeWordEngine == "openwakeword") WakeWordEngineModel.OPENWAKEWORD else WakeWordEngineModel.MICROWAKEWORD)
             engine?.setActiveWakeWords(listOf(config.wakeWord))
             engine?.setActiveStopWords(listOf("stop"))
@@ -298,7 +299,7 @@ internal class BackgroundTaskController (private val context: Context): EventLis
             engine!!.start().collect {
                 when (it) {
                     is WakeWordEngineProvider.AudioResult.WakeDetected -> {
-                        Timber.d("Wake word result: ${it.detection.wakeWord} -> ${it.detection.score} -> ${it.detection.detected}: VAD: ${it.detection.vadScore}")
+                        //Timber.d("Wake word result: ${it.detection.wakeWord} -> ${it.detection.score} -> ${it.detection.detected}")
                         holdLastDetectionLevel(it.detection.score)
                         if (it.detection.score >= config.wakeWordThreshold) {
                             val now = System.currentTimeMillis()
@@ -310,13 +311,14 @@ internal class BackgroundTaskController (private val context: Context): EventLis
                                 detectionCooldowns[it.detection.wakeWordId] = now
                             }
                         } else {
-                            Timber.d("Wake word not detected: ${it.detection.wakeWord} at ${it.detection.score} against ${config.wakeWordThreshold}")
+                            //Timber.d("Wake word not detected: ${it.detection.wakeWord} at ${it.detection.score} against ${config.wakeWordThreshold}")
                         }
                     }
 
                     is WakeWordEngineProvider.AudioResult.StopDetected -> {
                         if (it.detection.detected) {
                             Timber.d("Stop word detected: ${it.detection.wakeWord}")
+                            BroadcastSender.sendBroadcast(context, BroadcastSender.STOP_WORD_DETECTED)
                         }
                     }
 
@@ -347,6 +349,7 @@ internal class BackgroundTaskController (private val context: Context): EventLis
         engine = null
         engineStarted = false
         sendDiagnostics(0f, 0f)
+        Timber.d("Wake word detection terminated")
     }
 
     @RequiresPermission(Manifest.permission.RECORD_AUDIO)

@@ -84,9 +84,11 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
                                 actionAlarm(false)
                             }
                             else -> {
-                                volumeDucking("all", true)
-                                sendWakeWordDetection()
-                                sendStartPipeline()
+                                if (intent.action == BroadcastSender.WAKE_WORD_DETECTED) {
+                                    volumeDucking("all", true)
+                                    sendWakeWordDetection()
+                                    sendStartPipeline()
+                                }
                             }
                         }
                     }
@@ -94,7 +96,10 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
             }
         }
     }
-    val filter = IntentFilter().apply { addAction(BroadcastSender.WAKE_WORD_DETECTED) }
+    val filter = IntentFilter().apply {
+        addAction(BroadcastSender.WAKE_WORD_DETECTED)
+        addAction(BroadcastSender.STOP_WORD_DETECTED)
+    }
 
     fun run() {
         val connections = config.atomicConnectionCount.incrementAndGet()
