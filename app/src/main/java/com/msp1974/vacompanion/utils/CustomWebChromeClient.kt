@@ -11,25 +11,28 @@ class CustomWebChromeClient(private val context: Context) : WebChromeClient() {
         val alreadyGranted = ArrayList<String>()
         val toBeGranted = ArrayList<String>()
         request?.resources?.forEach {
-            if (it == PermissionRequest.RESOURCE_VIDEO_CAPTURE) {
-                if (ActivityCompat.checkSelfPermission(
-                        context,
-                        android.Manifest.permission.CAMERA,
-                    ) == PackageManager.PERMISSION_GRANTED
-                ) {
-                    alreadyGranted.add(it)
-                } else {
-                    toBeGranted.add(android.Manifest.permission.CAMERA)
+            when (it) {
+                PermissionRequest.RESOURCE_AUDIO_CAPTURE -> {
+                    if (ActivityCompat.checkSelfPermission(
+                            context,
+                            android.Manifest.permission.RECORD_AUDIO,
+                        ) == PackageManager.PERMISSION_GRANTED
+                    ) {
+                        alreadyGranted.add(it)
+                    } else {
+                        toBeGranted.add(android.Manifest.permission.RECORD_AUDIO)
+                    }
                 }
-            } else if (it == PermissionRequest.RESOURCE_AUDIO_CAPTURE) {
-                if (ActivityCompat.checkSelfPermission(
-                        context,
-                        android.Manifest.permission.RECORD_AUDIO,
-                    ) == PackageManager.PERMISSION_GRANTED
-                ) {
-                    alreadyGranted.add(it)
-                } else {
-                    toBeGranted.add(android.Manifest.permission.RECORD_AUDIO)
+                PermissionRequest.RESOURCE_VIDEO_CAPTURE -> {
+                    if (ActivityCompat.checkSelfPermission(
+                            context,
+                            android.Manifest.permission.CAMERA,
+                        ) == PackageManager.PERMISSION_GRANTED
+                    ) {
+                        alreadyGranted.add(it)
+                    } else {
+                        toBeGranted.add(android.Manifest.permission.CAMERA)
+                    }
                 }
             }
         }
