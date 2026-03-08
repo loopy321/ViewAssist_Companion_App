@@ -252,7 +252,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
     }
 
     fun initWebView() {
-        webViewClient = CustomWebViewClient(this, viewModel)
+        webViewClient = CustomWebViewClient(viewModel)
         webView = CustomWebView.getView(this)
         webView.initialise(config, webViewClient)
         webView.layoutParams = ViewGroup.LayoutParams(
