@@ -318,7 +318,12 @@ internal class BackgroundTaskController (private val context: Context): EventLis
                     is WakeWordEngineProvider.AudioResult.StopDetected -> {
                         if (it.detection.detected) {
                             Timber.d("Stop word detected: ${it.detection.wakeWord}")
-                            BroadcastSender.sendBroadcast(context, BroadcastSender.STOP_WORD_DETECTED)
+                            if (it.detection.score > 0.5) {
+                                BroadcastSender.sendBroadcast(
+                                    context,
+                                    BroadcastSender.STOP_WORD_DETECTED
+                                )
+                            }
                         }
                     }
 
