@@ -339,7 +339,7 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
                             "played",
                         )
 
-                        if (config.continueConversation && lastResponseIsQuestion) {
+                        if (config.continueConversation || lastResponseIsQuestion) {
                             sendStartPipeline()
                         } else {
                             setPipelineNextStageTimeout(2)
