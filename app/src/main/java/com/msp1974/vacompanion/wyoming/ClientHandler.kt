@@ -465,20 +465,8 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
             "screen-sleep" -> {
                 config.eventBroadcaster.notifyEvent(Event("screenSleep", "", ""))
             }
-
             "wake" -> {
-                thread{
-                    volumeDucking("all", true)
-                    sendWakeWordDetection()
-                    sendStartPipeline()
-                    // if screen is off, wake up
-                    if (config.screenOnWakeWord) {
-                        val screen = ScreenUtils(context)
-                        if (!screen.isScreenOn()) {
-                            config.eventBroadcaster.notifyEvent(Event("screenWake", "", ""))
-                        }
-                    }
-                }
+                config.eventBroadcaster.notifyEvent(Event("wakeWordTrigger", "", ""))
             }
             "alarm" -> {
                 if (event.getProp("payload") != "") {

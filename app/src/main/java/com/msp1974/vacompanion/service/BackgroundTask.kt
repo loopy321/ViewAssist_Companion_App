@@ -155,6 +155,16 @@ internal class BackgroundTaskController (private val context: Context): EventLis
                     }
                 }
             }
+            "wakeWordTrigger" -> {
+                wakeWordDetected(WakeWordEngineProvider.WakeWordDetection(
+                    wakeWordId =  config.wakeWord,
+                    wakeWord = config.wakeWord,
+                    detected =  true,
+                    score =  config.wakeWordThreshold
+                ),
+                false
+                )
+            }
             "recognitionError" -> {
                 when (event.newValue) {
                     "duplicate_wake_up_detected" -> {}
@@ -299,7 +309,6 @@ internal class BackgroundTaskController (private val context: Context): EventLis
             engine!!.start().collect {
                 when (it) {
                     is WakeWordEngineProvider.AudioResult.WakeDetected -> {
-                        //Timber.d("Wake word result: ${it.detection.wakeWord} -> ${it.detection.score} -> ${it.detection.detected}")
                         holdLastDetectionLevel(it.detection.score)
                         if (it.detection.score >= config.wakeWordThreshold) {
                             val now = System.currentTimeMillis()
@@ -310,8 +319,6 @@ internal class BackgroundTaskController (private val context: Context): EventLis
                                 wakeWordDetected(it.detection, engine!!.isStreaming())
                                 detectionCooldowns[it.detection.wakeWordId] = now
                             }
-                        } else {
-                            //Timber.d("Wake word not detected: ${it.detection.wakeWord} at ${it.detection.score} against ${config.wakeWordThreshold}")
                         }
                     }
 
