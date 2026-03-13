@@ -9,7 +9,6 @@ import com.msp1974.vacompanion.wakeword.microwakeword.models.WakeWordWithId
 import com.google.protobuf.ByteString
 import com.msp1974.vacompanion.audio.AudioDSP
 import com.msp1974.vacompanion.audio.MicrophoneInput
-import com.msp1974.vacompanion.audio.SpeexProcessor
 import com.msp1974.vacompanion.settings.APPConfig
 import com.msp1974.vacompanion.wakeword.WakeWordEngineProvider
 import kotlinx.coroutines.ExperimentalCoroutinesApi

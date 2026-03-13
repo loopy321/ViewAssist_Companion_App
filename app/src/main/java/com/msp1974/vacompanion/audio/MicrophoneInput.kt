@@ -17,6 +17,7 @@ class MicrophoneInput(
     val sampleRateInHz: Int = DEFAULT_SAMPLE_RATE_IN_HZ,
     val channelConfig: Int = DEFAULT_CHANNEL_CONFIG,
     val audioFormat: Int = DEFAULT_AUDIO_FORMAT,
+    val frameSize: Int = 0,
 ) : AutoCloseable {
     private val bufferSize =
         AudioRecord.getMinBufferSize(sampleRateInHz, channelConfig, audioFormat)
@@ -29,6 +30,7 @@ class MicrophoneInput(
     private var audioDSP = AudioDSP()
 
     val isRecording get() = audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING
+    val speex = SpeexProcessor(sampleRate = DEFAULT_SAMPLE_RATE_IN_HZ, frameSize = if (frameSize > 0) frameSize else bufferSize )
 
     @RequiresPermission(Manifest.permission.RECORD_AUDIO)
     fun start() {
@@ -60,7 +62,6 @@ class MicrophoneInput(
         val readCount = audioRecord.read(audioBuffer, 0, audioBuffer.size)
         if (readCount > 0) {
             if (useSpeex) {
-                val speex = SpeexProcessor(sampleRate = DEFAULT_SAMPLE_RATE_IN_HZ, frameSize = bufferSize )
                 speex.setDenoiseSuppression(10)
                 speex.setAGCLevel(20000)
                 return speex.processFrame(audioBuffer.copyOfRange(0, readCount))
