@@ -7,6 +7,15 @@ plugins {
     id("com.google.firebase.crashlytics")
 }
 
+tasks.register("printVersionName") {
+    group = "custom"
+    description = "Output version name for use in env vars"
+
+    doLast {
+        println(android.defaultConfig.versionName)
+    }
+}
+
 android {
     namespace = "com.msp1974.vacompanion"
     compileSdk = 36

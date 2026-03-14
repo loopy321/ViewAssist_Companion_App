@@ -40,12 +40,16 @@ jobs:
       - name: Set Up JDK
         uses: actions/setup-java@v4
         with:
-          distribution: 'zulu' # See 'Supported distributions' for available options
+          distribution: 'temurin' # See 'Supported distributions' for available options
           java-version: '17'
           cache: 'gradle'
 
       - name: Change wrapper permissions
         run: chmod +x ./gradlew
+
+      # Set version name as env variable
+      - name: Set version name as env variable
+        run: echo "version_name=$(./gradlew -q printVersionName)" >> $GITHUB_ENV
 
       # Run Tests Build
       - name: Run gradle tests
@@ -78,12 +82,12 @@ jobs:
       - name: Upload APK Debug - ${{ env.repository_name }}
         uses: actions/upload-artifact@v4
         with:
-          name: vaca-debug
+          name: vaca-${{ env.version_name }}-debug
           path: ${{ env.main_project_module }}/build/outputs/apk/debug/
 
       # Noted For Output [main_project_module]/build/outputs/apk/release/
       - name: Upload APK Release - ${{ env.repository_name }}
         uses: actions/upload-artifact@v4
         with:
-          name: vaca-release
+          name: vaca-${{ env.version_name }}-release
           path: ${{ env.main_project_module }}/build/outputs/apk/release/
