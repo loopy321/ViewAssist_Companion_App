@@ -61,6 +61,7 @@ async def async_setup_entry(
             WyomingSatelliteWakeWordSelect(device),
             WyomingSatelliteWakeWordSoundSelect(device),
             WyomingSatelliteScreenTimeoutSelect(device),
+            WyomingSatelliteScreenOrientationModeSelect(device),
         ]
     )
 
@@ -284,3 +285,38 @@ class WyomingSatelliteWakeWordEngineSelect(
 
         self.async_write_ha_state()
         self._device.set_custom_setting("wake_word_engine", option)
+
+
+class WyomingSatelliteScreenOrientationModeSelect(
+    VASatelliteEntity, SelectEntity, restore_state.RestoreEntity
+):
+    """Entity to represent screen orientation mode setting."""
+
+    entity_description = SelectEntityDescription(
+        key="screen_orientation_mode",
+        translation_key="screen_orientation_mode",
+        entity_category=EntityCategory.CONFIG,
+    )
+    _attr_should_poll = False
+    _attr_current_option = "auto"
+    _attr_options = [
+        "auto",
+        "portrait",
+        "landscape",
+        "reverse_portrait",
+        "reverse_landscape",
+    ]
+
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to Home Assistant."""
+        await super().async_added_to_hass()
+
+        state = await self.async_get_last_state()
+        if state is not None and state.state in self.options:
+            await self.async_select_option(state.state)
+
+    async def async_select_option(self, option: str) -> None:
+        """Select an option."""
+        self._attr_current_option = option
+        self.async_write_ha_state()
+        self._device.set_custom_setting("screen_orientation_mode", option)

@@ -148,6 +148,16 @@
                     "600": "10 minutes",
                     "1800": "30 minutes"
                 }
+            },
+            "screen_orientation_mode": {
+                "name": "Screen orientation",
+                "state": {
+                    "auto": "Auto",
+                    "portrait": "Portrait",
+                    "landscape": "Landscape",
+                    "reverse_portrait": "Reverse Portrait",
+                    "reverse_landscape": "Reverse Landscape"
+                }
             }
         },
         "sensor": {
