@@ -21,6 +21,7 @@ import com.msp1974.vacompanion.utils.Event
 import com.msp1974.vacompanion.utils.EventListener
 import com.msp1974.vacompanion.utils.FirebaseManager
 import com.msp1974.vacompanion.utils.Helpers
+import com.msp1974.vacompanion.utils.VolumeObserver
 import com.msp1974.vacompanion.wakeword.WakeWordEngine
 import com.msp1974.vacompanion.wakeword.WakeWordEngineModel
 import com.msp1974.vacompanion.wakeword.WakeWordEngineProvider
@@ -64,11 +65,23 @@ internal class BackgroundTaskController (private val context: Context): EventLis
     private var sensorRunner: Sensors? = null
     lateinit var assetManager: AssetManager
     lateinit var server: WyomingTCPServer
+    private lateinit var volumeObserver: VolumeObserver
 
     private var motionTask = CameraBackgroundTask(context)
 
     fun start() {
         assetManager = context.assets
+
+        volumeObserver = VolumeObserver(context) { musicVolume, notificationVolume ->
+            if (config.musicVolume != musicVolume) {
+                config.musicVolume = musicVolume
+                server.sendSetting("music_volume", musicVolume)
+            }
+            if (config.notificationVolume != notificationVolume) {
+                config.notificationVolume = notificationVolume
+                server.sendSetting("notification_volume", notificationVolume)
+            }
+        }
 
         // Start wyoming server
         server = WyomingTCPServer(context, config.serverPort, object : WyomingCallback {
@@ -76,6 +89,7 @@ internal class BackgroundTaskController (private val context: Context): EventLis
             override fun onSatelliteStarted() {
                 Timber.i("Background Task - Connection detected")
                 setInitialValues()
+                volumeObserver.register()
                 startSensors(context)
                 runWakeWordDetection()
                 BroadcastSender.sendBroadcast(context, BroadcastSender.SATELLITE_STARTED)
@@ -91,6 +105,7 @@ internal class BackgroundTaskController (private val context: Context): EventLis
                 }
                 terminateWakeWordDetection()
                 stopSensors()
+                volumeObserver.unregister()
                 zeroConf.registerService(config.serverPort)
             }
 
@@ -137,10 +152,10 @@ internal class BackgroundTaskController (private val context: Context): EventLis
                 }
             }
             "notificationVolume" -> {
-                setVolume(AudioManager.STREAM_NOTIFICATION, event.newValue as Float)
+                setVolume(AudioManager.STREAM_NOTIFICATION, event.newValue as Int)
             }
             "musicVolume" -> {
-                setVolume(AudioManager.STREAM_MUSIC, event.newValue as Float)
+                setVolume(AudioManager.STREAM_MUSIC, event.newValue as Int)
             }
             "wakeWord", "wakeWordThreshold", "wakeWordEngine", "useVoiceEnhancer", "useAdvancedGain" -> {
                 scope.launch {
@@ -418,7 +433,7 @@ internal class BackgroundTaskController (private val context: Context): EventLis
         }
     }
 
-    fun setVolume(stream: Int, volume: Float) {
+    fun setVolume(stream: Int, volume: Int) {
         try {
             val audioManager = AudManager(context)
             audioManager.setVolume(stream, volume)

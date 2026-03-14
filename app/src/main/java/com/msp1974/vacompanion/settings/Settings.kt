@@ -92,7 +92,6 @@ class APPConfig(val context: Context) {
         onValueChangedListener(property, oldValue, newValue)
     }
 
-
     var wakeWord: String by Delegates.observable(DEFAULT_WAKE_WORD) { property, oldValue, newValue ->
         onValueChangedListener(property, oldValue, newValue)
     }
@@ -113,15 +112,15 @@ class APPConfig(val context: Context) {
         onValueChangedListener(property, oldValue, newValue)
     }
 
-    var notificationVolume: Float by Delegates.observable(DEFAULT_NOTIFICATION_VOLUME) { property, oldValue, newValue ->
+    var notificationVolume: Int by Delegates.observable(DEFAULT_NOTIFICATION_VOLUME) { property, oldValue, newValue ->
         onValueChangedListener(property, oldValue, newValue)
     }
 
-    var musicVolume: Float by Delegates.observable(DEFAULT_MUSIC_VOLUME) { property, oldValue, newValue ->
+    var musicVolume: Int by Delegates.observable(DEFAULT_MUSIC_VOLUME) { property, oldValue, newValue ->
         onValueChangedListener(property, oldValue, newValue)
     }
 
-    var duckingVolume: Float by Delegates.observable(DEFAULT_DUCKING_VOLUME) { property, oldValue, newValue ->
+    var duckingVolume: Int by Delegates.observable(DEFAULT_DUCKING_VOLUME) { property, oldValue, newValue ->
         onValueChangedListener(property, oldValue, newValue)
     }
 
@@ -226,6 +225,11 @@ class APPConfig(val context: Context) {
         onValueChangedListener(property, oldValue, newValue)
     }
 
+    var screenOrientationMode: String by Delegates.observable("auto") { property, oldValue, newValue ->
+        onValueChangedListener(property, oldValue, newValue)
+    }
+
+
 
 
 
@@ -300,13 +304,13 @@ class APPConfig(val context: Context) {
             continueConversation = settings["continue_conversation"] as Boolean
         }
         if (settings.has("notification_volume")) {
-            notificationVolume = settings.getInt("notification_volume").toFloat() / 100
+            notificationVolume = settings.getInt("notification_volume")
         }
         if (settings.has("music_volume")) {
-            musicVolume = settings.getInt("music_volume").toFloat() / 100
+            musicVolume = settings.getInt("music_volume")
         }
         if (settings.has("ducking_volume")) {
-            duckingVolume = settings.getInt("ducking_volume").toFloat() / 100
+            duckingVolume = settings.getInt("ducking_volume")
         }
         if (settings.has("mic_gain")) {
             micGain = settings.getInt("mic_gain")
@@ -377,6 +381,10 @@ class APPConfig(val context: Context) {
         if (settings.has("screen_saver")) {
             screenSaver = settings.getBoolean("screen_saver")
         }
+        if (settings.has("screen_orientation_mode")) {
+            screenOrientationMode = settings.getString("screen_orientation_mode")
+        }
+
 
         Firebase.crashlytics.log("Settings update")
     }
@@ -422,17 +430,15 @@ class APPConfig(val context: Context) {
         const val DEFAULT_WAKE_WORD = "hey_jarvis"
         const val DEFAULT_WAKE_WORD_SOUND = "none"
         const val DEFAULT_WAKE_WORD_THRESHOLD = 0.6f
-        const val DEFAULT_NOTIFICATION_VOLUME = 0.5f
-        const val DEFAULT_MUSIC_VOLUME = 0.8f
+        const val DEFAULT_NOTIFICATION_VOLUME = 10
+        const val DEFAULT_MUSIC_VOLUME = 10
         const val DEFAULT_SCREEN_BRIGHTNESS = 0.5f
         const val DEFAULT_SCREEN_AUTO_BRIGHTNESS = true
         const val DEFAULT_SWIPE_REFRESH = true
-        const val DEFAULT_DUCKING_VOLUME = 0.1f
+        const val DEFAULT_DUCKING_VOLUME = 2
         const val DEFAULT_MUTE = false
         const val DEFAULT_MIC_GAIN = 0
         const val GITHUB_API_URL = "https://api.github.com/repos/msp1974/ViewAssist_Companion_App/releases"
-        const val ENABLE_UPDATER = true
-        const val USE_MICROWAKEWORD = true
 
         @Volatile
         private var instance: APPConfig? = null

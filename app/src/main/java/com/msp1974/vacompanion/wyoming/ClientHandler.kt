@@ -416,7 +416,7 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
                 if (event.getProp("payload") != "") {
                     val values = JSONObject(event.getProp("payload"))
                     musicPlayer.play(values.getString("url"))
-                    musicPlayer.setVolume(values.getInt("volume").toFloat() / 100)
+                    musicPlayer.setVolume(values.getInt("volume"))
                 }
             }
 
@@ -435,7 +435,7 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
             "set-volume" -> {
                 if (event.getProp("payload") != "") {
                     val values = JSONObject(event.getProp("payload"))
-                    musicPlayer.setVolume(values.getInt("volume").toFloat() / 100)
+                    musicPlayer.setVolume(values.getInt("volume"))
                 }
             }
 
