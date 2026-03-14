@@ -78,10 +78,12 @@ jobs:
       - name: Upload APK Debug - ${{ env.repository_name }}
         uses: actions/upload-artifact@v4
         with:
+          name: vaca-debug
           path: ${{ env.main_project_module }}/build/outputs/apk/debug/
 
       # Noted For Output [main_project_module]/build/outputs/apk/release/
       - name: Upload APK Release - ${{ env.repository_name }}
         uses: actions/upload-artifact@v4
         with:
+          name: vaca-release
           path: ${{ env.main_project_module }}/build/outputs/apk/release/
