@@ -257,6 +257,9 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
                 "custom-event" -> {
                     handleCustomEvent(event)
                 }
+                "navigate", "view-assist.navigate", "view_assist.navigate" -> {
+                    handleNavigateEvent(event)
+                }
             }
 
             // Events that must have a running satellite to be processed
@@ -355,6 +358,9 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
                     "custom-action" -> {
                         handleCustomAction(event)
                     }
+                    "navigate", "view-assist.navigate", "view_assist.navigate" -> {
+                        handleNavigateEvent(event)
+                    }
 
                     "timer-finished" -> {
                         actionAlarm(true)
@@ -401,13 +407,44 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
             "action" -> {
                 handleCustomAction(event)
             }
+            "navigate" -> {
+                handleNavigateEvent(event)
+            }
             "settings" -> {
                 config.processSettings(event.getProp("settings"))
             }
             "capabilities" -> {
                 sendCapabilities()
             }
+            else -> {
+                log.d("Unhandled custom event_type=${event.getProp("event_type")}")
+            }
         }
+    }
+
+    private fun handleNavigateEvent(event: WyomingPacket) {
+        val target = extractNavigateTargetFromEvent(event)
+        val revertTimeout = extractNavigateRevertTimeoutFromEvent(event)
+        config.remoteNavigateRevertTimeoutSec = revertTimeout
+        log.d("Navigate event received payload target=$target")
+        if (revertTimeout != null) {
+            log.d("Navigate event revert_timeout=$revertTimeout")
+        }
+        config.eventBroadcaster.notifyEvent(Event("navigate", "", target ?: ""))
+        if (target == null) {
+            log.w("Navigate event received with no usable target payload")
+        }
+    }
+
+    private fun extractNavigateTargetFromEvent(event: WyomingPacket): String? {
+        val keys = listOf("path", "url", "target", "uri", "view", "payload", "data")
+        for (key in keys) {
+            val value = event.getProp(key)
+            if (value.isBlank() || value == "null") continue
+            val extracted = extractNavigateTarget(value)
+            if (extracted != null) return extracted
+        }
+        return null
     }
 
     private fun handleCustomAction(event: WyomingPacket) {
@@ -465,6 +502,20 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
             "screen-sleep" -> {
                 config.eventBroadcaster.notifyEvent(Event("screenSleep", "", ""))
             }
+            "navigate", "view-assist.navigate", "view_assist.navigate" -> {
+                val payload = event.getProp("payload")
+                val target = extractNavigateTarget(payload)
+                val revertTimeout = extractNavigateRevertTimeout(payload)
+                config.remoteNavigateRevertTimeoutSec = revertTimeout
+                log.d("Navigate action received action=${event.getProp("action")} payload=$payload target=$target")
+                if (revertTimeout != null) {
+                    log.d("Navigate action revert_timeout=$revertTimeout")
+                }
+                config.eventBroadcaster.notifyEvent(Event("navigate", "", target ?: ""))
+                if (target == null) {
+                    log.w("Navigate action received with no usable target payload")
+                }
+            }
             "wake" -> {
                 config.eventBroadcaster.notifyEvent(Event("wakeWordTrigger", "", ""))
             }
@@ -489,6 +540,80 @@ class ClientHandler(private val context: Context, private val server: WyomingTCP
                 }
             }
         }
+    }
+
+    private fun extractNavigateTarget(payload: String): String? {
+        if (payload.isBlank() || payload == "null") return null
+
+        // Common integration payload shape: {"path":"/foo"} or {"url":"https://..."}
+        try {
+            val values = JSONObject(payload)
+            val keys = listOf("path", "url", "target", "uri", "view")
+            for (key in keys) {
+                if (values.has(key)) {
+                    val value = values.optString(key, "").trim()
+                    if (value.isNotEmpty()) return value
+                }
+            }
+        } catch (_: Exception) {
+            // Fall through and treat payload as plain target string.
+        }
+
+        // Also support map-like payload rendering such as "{path=/foo}".
+        val mapLikeMatch = Regex("(path|url|target|uri|view)\\s*=\\s*([^,}]+)")
+            .find(payload)
+        if (mapLikeMatch != null) {
+            val value = mapLikeMatch.groupValues[2].trim().removeSurrounding("\"")
+            if (value.isNotEmpty()) return value
+        }
+
+        // Raw string payload support.
+        return payload.trim().removePrefix("\"").removeSuffix("\"").takeIf { it.isNotEmpty() }
+    }
+
+    private fun extractNavigateRevertTimeoutFromEvent(event: WyomingPacket): Int? {
+        val directKeys = listOf("revert_timeout", "timeout")
+        for (key in directKeys) {
+            val value = event.getProp(key)
+            val parsed = parsePositiveIntOrNull(value)
+            if (parsed != null) return parsed
+        }
+
+        val nestedKeys = listOf("payload", "data")
+        for (key in nestedKeys) {
+            val value = event.getProp(key)
+            if (value.isBlank() || value == "null") continue
+            val parsed = extractNavigateRevertTimeout(value)
+            if (parsed != null) return parsed
+        }
+        return null
+    }
+
+    private fun extractNavigateRevertTimeout(payload: String): Int? {
+        if (payload.isBlank() || payload == "null") return null
+
+        try {
+            val values = JSONObject(payload)
+            val timeout = values.opt("revert_timeout")
+            parsePositiveIntOrNull(timeout?.toString())?.let { return it }
+            val fallbackTimeout = values.opt("timeout")
+            parsePositiveIntOrNull(fallbackTimeout?.toString())?.let { return it }
+        } catch (_: Exception) {
+            // Fall through and try map-like payload below.
+        }
+
+        val mapLikeMatch = Regex("(revert_timeout|timeout)\\s*=\\s*([^,}]+)").find(payload)
+        if (mapLikeMatch != null) {
+            val value = mapLikeMatch.groupValues[2].trim().removeSurrounding("\"")
+            parsePositiveIntOrNull(value)?.let { return it }
+        }
+
+        return null
+    }
+
+    private fun parsePositiveIntOrNull(value: String?): Int? {
+        if (value.isNullOrBlank()) return null
+        return value.trim().toIntOrNull()?.takeIf { it >= 0 }
     }
 
     private fun volumeDucking(type: String, active: Boolean) {

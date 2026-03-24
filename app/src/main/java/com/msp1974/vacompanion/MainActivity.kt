@@ -101,6 +101,12 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
     private var screenOffStartUp: Boolean = false
     private var screenOffInProgress: Boolean = false
     private var screenSleepWaitJob: Job? = null
+    private var screenSaverTimerJob: Job? = null
+    private var remoteNavigateRevertJob: Job? = null
+    private var screenSaverEnabled: Boolean = false
+    private var screenSaverActive: Boolean = false
+    private var preScreenSaverUrl: String? = null
+    private val screenSaverNavLockMs = 15_000L
 
 
 
@@ -244,13 +250,14 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                 config.screenTimeout = screen.getScreenTimeout()
                 if (config.screenTimeout < 15000) config.screenTimeout = 15000
                 screen.setScreenTimeout(config.screenTimeout)
-                setScreenSaver(false)
+                // Preserve saved screensaver mode on startup instead of forcing disabled.
+                setScreenSaver(config.screenSaver, "startup-restore")
             }
         } else if (viewModel.vacaState.value.satelliteRunning) {
             screen.setScreenBrightness(window, config.screenBrightness)
             screen.setScreenAutoBrightness(window, config.screenAutoBrightness)
             screen.setScreenTimeout(config.screenTimeout)
-            screen.setScreenAlwaysOn(window, config.screenAlwaysOn)
+            screen.setScreenAlwaysOn(window, shouldKeepScreenOn())
         }
     }
 
@@ -352,7 +359,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                     viewModel.setSatelliteRunning(true)
                     webView.setZoomLevel(config.zoomLevel)
                     config.screenOn = screen.isScreenOn()
-                    val url = AuthUtils.getURL(AuthUtils.getHAUrl(config))
+                    val url = getStartupDisplayUrl()
                     log.d("Loading URL: $url")
                     webView.loadUrl(url)
                 }
@@ -370,7 +377,7 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                 }
                 BroadcastSender.WEBVIEW_CRASH -> {
                     initWebView()
-                    val url = AuthUtils.getURL(AuthUtils.getHAUrl(config))
+                    val url = getStartupDisplayUrl()
                     log.d("Loading URL: $url")
                     webView.loadUrl(url)
                 }
@@ -482,12 +489,13 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
             if (config.isRunning) {
                 viewModel.setSatelliteRunning(true)
                 webView.setZoomLevel(config.zoomLevel)
-                val url = AuthUtils.getURL(AuthUtils.getHAUrl(config))
+                val url = getStartupDisplayUrl()
                 log.d("Loading URL: $url")
                 webView.loadUrl(url)
             } else {
                 setStatus(getString(R.string.status_waiting_for_connection))
             }
+            markInitialisedIfNeeded()
             return
         }
         config.backgroundTaskStatus = BackgroundTaskStatus.STARTING
@@ -511,11 +519,26 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
 
         if (screenOffStartUp) {
             delay(2000)
-            screenSleep()
+            if (config.screenSaver) {
+                log.d("Startup while screen off: preserving screensaver mode and skipping forced sleep")
+                setScreenSaver(true, "startup-screen-off")
+                screenWake()
+            } else {
+                screenSleep()
+            }
             screenOffStartUp = false
         }
-        setScreenSettings()
+        markInitialisedIfNeeded()
+    }
+
+    private fun markInitialisedIfNeeded() {
+        if (initialised) return
         initialised = true
+        screenSaverEnabled = config.screenSaver
+        if (screenSaverEnabled) {
+            scheduleScreenSaver()
+        }
+        setScreenSettings()
         Timber.d("Initialised")
     }
 
@@ -526,10 +549,8 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                 when (event.eventName) {
                     "screenAlwaysOn" -> {
                         val enabled = event.newValue as Boolean
-                        //if (enabled) {
-                            //screenWake()
-                        //}
-                        screen.setScreenAlwaysOn(window, enabled)
+                        val keepOn = enabled || screenSaverEnabled || screenSaverActive || viewModel.vacaState.value.satelliteRunning
+                        screen.setScreenAlwaysOn(window, keepOn)
                     }
                     "screenAutoBrightness" -> {
                         if (screen.isScreenOn() and !viewModel.vacaState.value.screenBlank) {
@@ -558,12 +579,64 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
                 "zoomLevel" -> webView.setZoomLevel(event.newValue as Int)
                 "darkMode" -> setDarkMode(event.newValue as Boolean)
                 "refresh" -> webView.reload()
-                "screenWake" -> screenWake()
+                "screenWake" -> {
+                    // A remote wake request should not count as direct user interaction.
+                    if (!screenSaverActive) {
+                        config.lastActivity = System.currentTimeMillis()
+                    } else {
+                        // Navigate commonly follows this action. Avoid restoring clock/page first.
+                        screenSaver(false, "screenWake-action", restorePreviousUrl = false)
+                    }
+                    screenWake()
+                }
                 "screenSleep" -> screenSleep()
-                "screenSaver" -> screenSaver(event.newValue as Boolean)
+                "screenSaver" -> setScreenSaver(event.newValue as Boolean, "settings-event")
+                "navigate" -> {
+                    val target = event.newValue.toString()
+                    config.lastActivity = System.currentTimeMillis()
+                    if (screenSaverActive) {
+                        // Navigate should own the next URL and avoid clock restore races.
+                        screenSaver(false, "navigate-action", restorePreviousUrl = false)
+                    }
+                    screenWake()
+                    if (target.isNotBlank()) {
+                        val resolvedTarget = resolveNavigationTarget(target)
+                        val targetPath = runCatching { android.net.Uri.parse(resolvedTarget).path.orEmpty() }
+                            .getOrElse { "" }
+                        val revertTimeoutSec = config.remoteNavigateRevertTimeoutSec
+                            ?.takeIf { it >= 0 }
+                            ?: 20
+                        val guardWindowMs = (revertTimeoutSec.toLong() * 1000L) + 5_000L
+                        config.remoteNavigateTargetUrl = resolvedTarget
+                        config.remoteNavigateTargetPath = targetPath
+                        config.remoteNavigateGuardUntilMs = System.currentTimeMillis() + guardWindowMs
+                        log.d(
+                            "Navigate guard armed targetPath=$targetPath timeoutSec=$revertTimeoutSec " +
+                                "until=${config.remoteNavigateGuardUntilMs}"
+                        )
+                        log.d("Navigate action target=$target resolved=$resolvedTarget")
+                        webView.loadUrl(resolvedTarget)
+                    } else {
+                        log.d("Navigate action received with empty target; wake only")
+                    }
+                    val revertTimeoutSec = config.remoteNavigateRevertTimeoutSec
+                    if (revertTimeoutSec != null) {
+                        scheduleRemoteNavigateRevert(revertTimeoutSec)
+                    } else {
+                        cancelRemoteNavigateRevert("navigate-no-timeout")
+                    }
+                    config.remoteNavigateRevertTimeoutSec = null
+                    if (screenSaverEnabled) {
+                        scheduleScreenSaver()
+                    }
+                }
                 "screenOrientationMode" -> setScreenOrientation(event.newValue as String)
                 "deviceBump" -> if (config.screenOnBump) screenWake()
-                "proximity" -> if (config.screenOnProximity && event.newValue as Float == 0f) screenWake()
+                "proximity" -> {
+                    if (config.screenOnProximity && event.newValue as Float == 0f) {
+                        screenWake()
+                    }
+                }
                 "motion" -> onMotion()
                 "showToastMessage" -> Toast.makeText(
                     this,
@@ -583,6 +656,13 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         if (config.screenOnMotion) screenWake()
     }
 
+    private fun logScreenSaverState(action: String, reason: String) {
+        log.d(
+            "ScreenSaver $action reason=$reason enabled=$screenSaverEnabled active=$screenSaverActive " +
+                "screenOn=${config.screenOn} lastActivity=${config.lastActivity}"
+        )
+    }
+
     fun setScreenOrientation(mode: String) {
         when (mode) {
             "auto" ->  setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED)
@@ -593,29 +673,64 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         }
     }
 
-    fun screenSaver(active: Boolean) {
+    fun screenSaver(active: Boolean, reason: String = "unspecified", restorePreviousUrl: Boolean = true) {
         if (active) {
-            Timber.d("Enabling screen saver")
-            viewModel.setScreenBlank(true)
-            screen.setScreenAlwaysOn(window, true)
-            screen.setScreenAutoBrightness(window, false)
-            screen.setScreenBrightness(window, 0.01f)
-        } else {
-            Timber.d("Disabling screen saver")
+            if (screenSaverActive) return
+            Timber.d("ScreenSaver ON reason=$reason")
+            logScreenSaverState("ON", reason)
+            cancelRemoteNavigateRevert("screensaver-on")
+            screenSaverActive = true
+            config.screenSaverActive = true
+            config.screenSaverStartedAtMs = System.currentTimeMillis()
+            config.screenSaverNavLockUntilMs = config.screenSaverStartedAtMs + screenSaverNavLockMs
+            preScreenSaverUrl = webView.url
             viewModel.setScreenBlank(false)
-            screen.setScreenAlwaysOn(window, config.screenAlwaysOn)
-            screen.setScreenAutoBrightness(window, config.screenAutoBrightness)
-            screen.setScreenBrightness(window, config.screenBrightness)
+            screen.setScreenAlwaysOn(window, true)
+            webView.loadUrl(getScreenSaverUrl())
+        } else {
+            if (!screenSaverActive) return
+            Timber.d("ScreenSaver OFF reason=$reason")
+            logScreenSaverState("OFF", reason)
+            screenSaverActive = false
+            config.screenSaverActive = false
+            config.screenSaverStartedAtMs = 0
+            config.screenSaverNavLockUntilMs = 0
+            viewModel.setScreenBlank(false)
+            screen.setScreenAlwaysOn(window, shouldKeepScreenOn())
+            if (restorePreviousUrl) {
+                webView.loadUrl(preScreenSaverUrl ?: AuthUtils.getURL(AuthUtils.getHAUrl(config)))
+            }
+            preScreenSaverUrl = null
         }
     }
 
-    fun setScreenSaver(active: Boolean) {
-        screenSaver(active)
+    fun setScreenSaver(active: Boolean, reason: String = "unspecified") {
+        Timber.d("ScreenSaver mode=${if (active) "ENABLED" else "DISABLED"} reason=$reason")
+        logScreenSaverState("MODE_${if (active) "ENABLED" else "DISABLED"}", reason)
+        screenSaverEnabled = active
+        if (!active) {
+            config.screenSaverActive = false
+        }
         config.screenSaver = active
+        screen.setScreenAlwaysOn(window, shouldKeepScreenOn())
+        if (active) {
+            if (!screenSaverActive) {
+                viewModel.setScreenBlank(false)
+            }
+            scheduleScreenSaver()
+        } else {
+            cancelScreenSaverTimer()
+            if (screenSaverActive) {
+                screenSaver(false, reason)
+            } else {
+                viewModel.setScreenBlank(false)
+            }
+        }
     }
 
     fun screenWake() {
         Timber.d("Wake screen")
+        log.d("Screen wake requested")
         // Cancel any screen sleep timer
         if (screenSleepWaitJob != null && screenSleepWaitJob!!.isActive) {
             screenSleepWaitJob!!.cancel()
@@ -631,31 +746,30 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         screen.wakeScreen()
 
         if (viewModel.vacaState.value.screenBlank && initialised) {
-            setScreenSaver(false)
+            setScreenSaver(false, "screenWake-clear-blank")
+        }
+
+        if (screenSaverEnabled) {
+            scheduleScreenSaver()
         }
     }
 
     fun screenSleep() {
         Timber.d("Sleeping screen")
+        log.d("Screen sleep requested")
         if (permissions.isDeviceAdmin()) {
             screen.setPartialWakeLock()
             lockScreen()
-            setScreenSaver(false)
             return
         }
 
         if (!screenOffInProgress) {
-            Timber.d("Sleeping screen via timeout")
-            screenOffInProgress = true
-            setScreenSaver(true)
-            screen.setPartialWakeLock()
-            if (screen.setScreenTimeout(1000)) {
-                screenSleepWaitJob = lifecycleScope.launch {
-                    waitForScreenOff()
-                }
+            Timber.d("Activating screen saver dashboard")
+            if (screenSaverEnabled) {
+                screenSaver(true, "screenSleep-action")
             } else {
-                config.screenOn = false
-                screenOffInProgress = false
+                setScreenSaver(true, "screenSleep-action-enable-mode")
+                screenSaver(true, "screenSleep-action")
             }
         }
     }
@@ -682,8 +796,132 @@ class MainActivity : AppCompatActivity(), EventListener, ComponentCallbacks2 {
         }
         config.screenOn = false
         screenOffInProgress = false
-        setScreenSaver(false)
         log.d("Screen off")
+    }
+
+    override fun onUserInteraction() {
+        super.onUserInteraction()
+        log.d("User interaction detected")
+        onUserActivity()
+    }
+
+    private fun onUserActivity() {
+        config.lastActivity = System.currentTimeMillis()
+        log.d("User activity timestamp updated -> ${config.lastActivity}")
+        cancelRemoteNavigateRevert("user-activity")
+        if (screenSaverActive) {
+            preScreenSaverUrl = getClockUrl()
+            screenSaver(false, "user-interaction")
+            if (screenSaverEnabled) {
+                scheduleScreenSaver()
+            }
+            return
+        }
+        if (screenSaverEnabled) {
+            scheduleScreenSaver()
+        }
+    }
+
+    private fun scheduleScreenSaver() {
+        cancelScreenSaverTimer()
+        if (!screenSaverEnabled || !initialised) return
+        val timeoutMs = maxOf(15_000L, config.screenTimeout.toLong())
+        Timber.d("ScreenSaver timer scheduled in ${timeoutMs}ms")
+        log.d(
+            "ScreenSaver timer scheduled timeoutMs=$timeoutMs " +
+                "enabled=$screenSaverEnabled active=$screenSaverActive screenOn=${config.screenOn}"
+        )
+        screenSaverTimerJob = lifecycleScope.launch {
+            delay(timeoutMs)
+            if (screenSaverEnabled && !screenSaverActive && config.screenOn && viewModel.vacaState.value.satelliteRunning) {
+                screenSaver(true, "idle-timeout")
+            } else {
+                log.d(
+                    "ScreenSaver timer skipped enabled=$screenSaverEnabled active=$screenSaverActive " +
+                        "screenOn=${config.screenOn} satelliteRunning=${viewModel.vacaState.value.satelliteRunning}"
+                )
+            }
+        }
+    }
+
+    private fun cancelScreenSaverTimer() {
+        if (screenSaverTimerJob?.isActive == true) {
+            screenSaverTimerJob?.cancel()
+        }
+        screenSaverTimerJob = null
+    }
+
+    private fun scheduleRemoteNavigateRevert(timeoutSec: Int) {
+        cancelRemoteNavigateRevert("reschedule")
+        if (timeoutSec <= 0) {
+            log.d("Remote navigate revert disabled timeoutSec=$timeoutSec")
+            return
+        }
+        val delayMs = timeoutSec.toLong() * 1000L
+        log.d("Remote navigate revert scheduled timeoutSec=$timeoutSec delayMs=$delayMs")
+        remoteNavigateRevertJob = lifecycleScope.launch {
+            delay(delayMs)
+            if (screenSaverActive) {
+                log.d("Remote navigate revert skipped (screensaver active)")
+                return@launch
+            }
+            val clockUrl = getClockUrl()
+            log.d("Remote navigate revert loading clock url=$clockUrl")
+            // This is an intentional clock transition, so disable navigate guard first.
+            config.remoteNavigateGuardUntilMs = 0
+            config.remoteNavigateTargetPath = ""
+            config.remoteNavigateTargetUrl = ""
+            config.lastActivity = System.currentTimeMillis()
+            webView.loadUrl(clockUrl)
+            if (screenSaverEnabled) {
+                scheduleScreenSaver()
+            }
+        }
+    }
+
+    private fun cancelRemoteNavigateRevert(reason: String) {
+        if (remoteNavigateRevertJob?.isActive == true) {
+            remoteNavigateRevertJob?.cancel()
+            log.d("Remote navigate revert cancelled reason=$reason")
+        }
+        remoteNavigateRevertJob = null
+    }
+
+    private fun shouldKeepScreenOn(): Boolean {
+        return config.screenAlwaysOn || screenSaverEnabled || screenSaverActive || viewModel.vacaState.value.satelliteRunning
+    }
+
+    private fun getClockUrl(): String {
+        return AuthUtils.getHAUrl(config, withDashboardPath = false)
+            .removeSuffix("/") + "/view-assist/clock"
+    }
+
+    private fun getScreenSaverUrl(): String {
+        return AuthUtils.getHAUrl(config, withDashboardPath = false)
+            .removeSuffix("/") + "/dashboard-screensaver"
+    }
+
+    private fun getStartupDisplayUrl(): String {
+        // If no explicit dashboard path is configured, go straight to clock.
+        // This avoids loading HA root first and significantly reduces time-to-clock.
+        if (config.homeAssistantDashboard.isBlank()) {
+            return AuthUtils.getURL(getClockUrl())
+        }
+        return AuthUtils.getURL(AuthUtils.getHAUrl(config))
+    }
+
+    private fun resolveNavigationTarget(target: String): String {
+        val trimmed = target.trim()
+        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+            return trimmed
+        }
+
+        val base = AuthUtils.getHAUrl(config, withDashboardPath = false).removeSuffix("/")
+        return if (trimmed.startsWith("/")) {
+            base + trimmed
+        } else {
+            "$base/${trimmed.removePrefix("/")}"
+        }
     }
 
     fun setDarkMode(isDark: Boolean) {

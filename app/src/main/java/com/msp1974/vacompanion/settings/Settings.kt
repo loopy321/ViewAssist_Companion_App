@@ -75,6 +75,13 @@ class APPConfig(val context: Context) {
     var backgroundTaskRunning: Boolean = false
     var backgroundTaskStatus: BackgroundTaskStatus = BackgroundTaskStatus.NOT_STARTED
     var isRunning: Boolean = false
+    var screenSaverActive: Boolean = false
+    var screenSaverStartedAtMs: Long = 0
+    var screenSaverNavLockUntilMs: Long = 0
+    var remoteNavigateGuardUntilMs: Long = 0
+    var remoteNavigateTargetPath: String = ""
+    var remoteNavigateTargetUrl: String = ""
+    var remoteNavigateRevertTimeoutSec: Int? = null
 
     var hasRecordAudioPermission: Boolean = false
     var hasPostNotificationPermission: Boolean = false

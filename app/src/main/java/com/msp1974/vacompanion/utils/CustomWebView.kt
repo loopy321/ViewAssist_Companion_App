@@ -18,6 +18,7 @@ import com.msp1974.vacompanion.jsinterface.WebAppInterface
 import com.msp1974.vacompanion.jsinterface.WebViewJavascriptInterface
 import com.msp1974.vacompanion.settings.APPConfig
 import com.msp1974.vacompanion.settings.PageLoadingStage
+import org.json.JSONObject
 import timber.log.Timber
 
 @SuppressLint("SetJavaScriptEnabled", "ViewConstructor")
@@ -33,6 +34,7 @@ class CustomWebView @JvmOverloads constructor(
 
     private val log = Logger()
     private var requestDisallow = false
+    private var lastNavigateGuardEnforceMs: Long = 0L
     private val androidInterface: Any = object : Any() {
         @JavascriptInterface
         fun requestScrollEvents() {
@@ -85,12 +87,41 @@ class CustomWebView @JvmOverloads constructor(
 
     val ViewAssistEventHandler = object : ViewAssistCallback {
         override fun onEvent(event: String, data: String) {
-            //if (event == "location-changed") {
-            //    Handler(Looper.getMainLooper()).post({
-            //        setPageLoadingState(PageLoadingStage.LOADED)
-            //    })
-            //}
-            Timber.d("Event received: $event, $data")
+            if (event == "vaca-route") {
+                Timber.d("Route event: $data")
+                handleRouteDiagnostics(data)
+            } else {
+                Timber.d("Event received: $event, $data")
+            }
+        }
+    }
+
+    private fun handleRouteDiagnostics(data: String) {
+        val payload = runCatching { JSONObject(data) }.getOrNull() ?: return
+        val path = payload.optString("path").ifBlank { payload.optString("href") }.trim()
+        if (path.isBlank()) return
+
+        val guardActive = System.currentTimeMillis() < config.remoteNavigateGuardUntilMs
+        val targetPath = config.remoteNavigateTargetPath
+        val targetUrl = config.remoteNavigateTargetUrl
+        val isClockPath = path.startsWith("/view-assist/clock")
+        val targetIsClock = targetPath.startsWith("/view-assist/clock")
+
+        if (!config.screenSaverActive &&
+            guardActive &&
+            isClockPath &&
+            targetPath.isNotBlank() &&
+            !targetIsClock &&
+            targetUrl.isNotBlank()
+        ) {
+            val now = System.currentTimeMillis()
+            if (now - lastNavigateGuardEnforceMs < 1000L) return
+            lastNavigateGuardEnforceMs = now
+            log.d(
+                "Blocked clock route event during navigate guard path=$path targetPath=$targetPath " +
+                    "until=${config.remoteNavigateGuardUntilMs}"
+            )
+            Handler(Looper.getMainLooper()).post { loadUrl(targetUrl) }
         }
     }
 
