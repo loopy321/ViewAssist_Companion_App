@@ -32,6 +32,9 @@
             "screen_on": {
                 "name": "Screen"
             },
+            "ui_idle": {
+                "name": "UI idle"
+            },
             "motion_detected": {
                 "name": "Motion"
             }
@@ -242,6 +245,11 @@
             },
             "screen_saver": {
                 "name": "Screen saver"
+            }
+        },
+        "text": {
+            "screensaver_dashboard": {
+                "name": "Screensaver dashboard path"
             }
         }
     }

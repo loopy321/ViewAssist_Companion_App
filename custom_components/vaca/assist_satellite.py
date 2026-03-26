@@ -113,6 +113,7 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
 
         # stream tts var to allow interupt and cancel remaining response
         self.stream_tts = False
+        self._last_ui_idle: bool | None = None
 
     async def on_restart(self) -> None:
         """Block until pipeline loop will be restarted."""
@@ -160,6 +161,16 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
                     if self.hass.config.internal_url
                     else ""
                 )
+                screensaver_path = (
+                    self.device.custom_settings.get("screensaver_dashboard")
+                    if self.device.custom_settings
+                    else None
+                )
+                if not isinstance(screensaver_path, str) or not screensaver_path.strip():
+                    screensaver_path = "/dashboard-screensaver"
+                elif not screensaver_path.startswith("/"):
+                    screensaver_path = f"/{screensaver_path}"
+                self.device.custom_settings["ha_screensaver_dashboard"] = screensaver_path
                 home = getVADashboardPath(self.hass, self.device.satellite_id)
                 self.device.custom_settings["ha_dashboard"] = home.removeprefix("/")
                 # Send config event
@@ -190,6 +201,8 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
                     evt.event_type,
                     evt.event_data,
                 )
+                if evt.event_type == STATUS_EVENT_TYPE and evt.event_data:
+                    self._process_ui_idle_status(evt.event_data)
 
             async_dispatcher_send(
                 self.hass,
@@ -199,6 +212,62 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
             return False, None
 
         return True, event
+
+    @callback
+    def _process_ui_idle_status(self, event_data: dict[str, Any]) -> None:
+        """Map ui_idle status transitions to navigation actions."""
+        sensors = event_data.get("sensors")
+        if not isinstance(sensors, dict) or "ui_idle" not in sensors:
+            return
+
+        ui_idle = bool(sensors["ui_idle"])
+        previous = self._last_ui_idle
+        self._last_ui_idle = ui_idle
+
+        # Only act on transitions.
+        if previous is ui_idle:
+            return
+
+        screensaver_path = self._normalize_path(
+            self.device.custom_settings.get("ha_screensaver_dashboard")
+            if self.device.custom_settings
+            else None,
+            "/dashboard-screensaver",
+        )
+        home_path = self._normalize_path(
+            self.device.custom_settings.get("ha_dashboard")
+            if self.device.custom_settings
+            else None,
+            "/view-assist/clock",
+        )
+
+        if ui_idle:
+            _LOGGER.debug(
+                "ui_idle transition false->true, navigating to screensaver: %s",
+                screensaver_path,
+            )
+            self._send_custom_action(
+                "navigate",
+                {"path": screensaver_path, "revert_timeout": 0},
+            )
+        elif previous is True:
+            _LOGGER.debug(
+                "ui_idle transition true->false, waking and navigating home: %s",
+                home_path,
+            )
+            self._send_custom_action("screen-wake", None)
+            self._send_custom_action(
+                "navigate",
+                {"path": home_path, "revert_timeout": 0},
+            )
+
+    @staticmethod
+    def _normalize_path(path: Any, default: str) -> str:
+        """Normalize path values from settings."""
+        if not isinstance(path, str) or not path.strip():
+            return default
+        path = path.strip()
+        return path if path.startswith("/") else f"/{path}"
 
     async def _connect(self) -> None:
         """Connect to satellite over TCP.  Uses custom TCP client to allow callbacks on send."""
@@ -430,6 +499,11 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
         self, command: str, payload: str | float | None = None
     ) -> None:
         """Send a media player command to the satellite."""
+        _LOGGER.debug(
+            "Sending custom action to satellite: command=%s payload=%s",
+            command,
+            payload,
+        )
         if self._client is not None and self._client.can_write_event():
             self.config_entry.async_create_background_task(
                 self.hass,

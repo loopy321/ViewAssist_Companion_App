@@ -43,6 +43,7 @@ async def async_setup_entry(
     entities = []
 
     entities.append(WyomingSatelliteScreenOnBinarySensor(device))
+    entities.append(WyomingSatelliteUiIdleBinarySensor(device))
 
     if capabilities := device.capabilities:
         if capabilities.get("has_battery"):
@@ -149,3 +150,13 @@ class WyomingSatelliteMotionDetectedSensor(_WyomingSatelliteDeviceBinarySensorBa
         await asyncio.sleep(20)
         self._attr_is_on = False
         self.schedule_update_ha_state()
+
+
+class WyomingSatelliteUiIdleBinarySensor(_WyomingSatelliteDeviceBinarySensorBase):
+    """Entity to represent UI idle status from the companion app."""
+
+    entity_description = BinarySensorEntityDescription(
+        key="ui_idle",
+        translation_key="ui_idle",
+        icon="mdi:power-sleep",
+    )

@@ -36,6 +36,7 @@ SATELLITE_PLATFORMS = [
     Platform.MEDIA_PLAYER,
     Platform.NUMBER,
     Platform.SENSOR,
+    Platform.TEXT,
 ]
 
 __all__ = [
