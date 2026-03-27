@@ -114,6 +114,10 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
         # stream tts var to allow interupt and cancel remaining response
         self.stream_tts = False
         self._last_ui_idle: bool | None = None
+        self._last_current_path: str | None = None
+        self._screensaver_active = False
+        self._pending_non_screensaver_path: str | None = None
+        self._pending_non_screensaver_until = 0.0
 
     async def on_restart(self) -> None:
         """Block until pipeline loop will be restarted."""
@@ -208,10 +212,44 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
     def _process_ui_idle_status(self, event_data: dict[str, Any]) -> None:
         """Map ui_idle status transitions to navigation actions."""
         sensors = event_data.get("sensors")
-        if not isinstance(sensors, dict) or "ui_idle" not in sensors:
+        if not isinstance(sensors, dict):
+            return
+
+        ha_navigate_screensaver = bool(
+            self.device.custom_settings.get("ha_navigate_screensaver")
+            if self.device.custom_settings
+            else False
+        )
+
+        current_path = sensors.get("current_path")
+        if isinstance(current_path, str) and current_path.strip():
+            normalized_current_path = self._normalize_path(current_path, "/")
+            self._last_current_path = normalized_current_path
+            screensaver_path = self._normalize_path(
+                self.device.custom_settings.get("ha_screensaver_dashboard")
+                if self.device.custom_settings
+                else None,
+                "/dashboard-screensaver",
+            )
+            self._screensaver_active = normalized_current_path.startswith(
+                screensaver_path
+            )
+            if normalized_current_path == self._pending_non_screensaver_path:
+                self._pending_non_screensaver_path = None
+                self._pending_non_screensaver_until = 0.0
+
+        if "ui_idle" not in sensors:
             return
 
         ui_idle = bool(sensors["ui_idle"])
+        if not ha_navigate_screensaver:
+            self._last_ui_idle = ui_idle
+            _LOGGER.debug(
+                "Ignoring ui_idle=%s because ha_navigate_screensaver is disabled",
+                ui_idle,
+            )
+            return
+
         previous = self._last_ui_idle
         self._last_ui_idle = ui_idle
 
@@ -231,26 +269,57 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
             else None,
             "/view-assist/clock",
         )
+        current_path = self._last_current_path
+        on_home_path = bool(current_path) and current_path.startswith(home_path)
+        on_screensaver_path = bool(current_path) and current_path.startswith(
+            screensaver_path
+        )
 
         if ui_idle:
-            _LOGGER.debug(
-                "ui_idle transition false->true, navigating to screensaver: %s",
-                screensaver_path,
-            )
-            self._send_custom_action(
-                "navigate",
-                {"path": screensaver_path, "revert_timeout": 0},
-            )
+            if on_home_path:
+                _LOGGER.debug(
+                    "ui_idle transition false->true on home path %s, navigating to screensaver: %s",
+                    home_path,
+                    screensaver_path,
+                )
+                self._screensaver_active = True
+                self._send_custom_action(
+                    "navigate",
+                    {"path": screensaver_path, "revert_timeout": 0},
+                )
+            else:
+                _LOGGER.debug(
+                    "ui_idle transition false->true ignored because current_path=%s is not home_path=%s",
+                    current_path,
+                    home_path,
+                )
         elif previous is True:
-            _LOGGER.debug(
-                "ui_idle transition true->false, waking and navigating home: %s",
-                home_path,
-            )
-            self._send_custom_action("screen-wake", None)
-            self._send_custom_action(
-                "navigate",
-                {"path": home_path, "revert_timeout": 0},
-            )
+            if (
+                self._pending_non_screensaver_path
+                and time.monotonic() < self._pending_non_screensaver_until
+            ):
+                _LOGGER.debug(
+                    "ui_idle transition true->false ignored due to pending navigation to %s",
+                    self._pending_non_screensaver_path,
+                )
+                return
+            if self._screensaver_active or on_screensaver_path:
+                _LOGGER.debug(
+                    "ui_idle transition true->false from screensaver, waking and navigating home: %s",
+                    home_path,
+                )
+                self._screensaver_active = False
+                self._send_custom_action("screen-wake", None)
+                self._send_custom_action(
+                    "navigate",
+                    {"path": home_path, "revert_timeout": 0},
+                )
+            else:
+                _LOGGER.debug(
+                    "ui_idle transition true->false ignored because current_path=%s is not screensaver_path=%s",
+                    current_path,
+                    screensaver_path,
+                )
 
     @staticmethod
     def _normalize_path(path: Any, default: str) -> str:
@@ -293,6 +362,10 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
         """Connect to satellite over TCP.  Uses custom TCP client to allow callbacks on send."""
         await self._disconnect()
         self._last_ui_idle = None
+        self._last_current_path = None
+        self._screensaver_active = False
+        self._pending_non_screensaver_path = None
+        self._pending_non_screensaver_until = 0.0
 
         _LOGGER.debug(
             "Connecting VACA to satellite at %s:%s",
@@ -525,10 +598,24 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
                 "custom settings event",
             )
 
-    def _send_custom_action(
-        self, command: str, payload: str | float | None = None
-    ) -> None:
+    def _send_custom_action(self, command: str, payload: Any = None) -> None:
         """Send a media player command to the satellite."""
+        if command == "navigate" and isinstance(payload, dict):
+            path = payload.get("path")
+            if isinstance(path, str) and path.strip():
+                normalized_path = self._normalize_path(path, "/")
+                screensaver_path = self._normalize_path(
+                    self.device.custom_settings.get("ha_screensaver_dashboard")
+                    if self.device.custom_settings
+                    else None,
+                    "/dashboard-screensaver",
+                )
+                if not normalized_path.startswith(screensaver_path):
+                    self._pending_non_screensaver_path = normalized_path
+                    self._pending_non_screensaver_until = time.monotonic() + 5.0
+                else:
+                    self._pending_non_screensaver_path = None
+                    self._pending_non_screensaver_until = 0.0
         _LOGGER.debug(
             "Sending custom action to satellite: command=%s payload=%s",
             command,
