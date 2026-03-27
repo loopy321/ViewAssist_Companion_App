@@ -161,16 +161,7 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
                     if self.hass.config.internal_url
                     else ""
                 )
-                screensaver_path = (
-                    self.device.custom_settings.get("screensaver_dashboard")
-                    if self.device.custom_settings
-                    else None
-                )
-                if not isinstance(screensaver_path, str) or not screensaver_path.strip():
-                    screensaver_path = "/dashboard-screensaver"
-                elif not screensaver_path.startswith("/"):
-                    screensaver_path = f"/{screensaver_path}"
-                self.device.custom_settings["ha_screensaver_dashboard"] = screensaver_path
+                self._apply_screensaver_settings()
                 home = getVADashboardPath(self.hass, self.device.satellite_id)
                 self.device.custom_settings["ha_dashboard"] = home.removeprefix("/")
                 # Send config event
@@ -269,9 +260,39 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
         path = path.strip()
         return path if path.startswith("/") else f"/{path}"
 
+    def _apply_screensaver_settings(self) -> tuple[str, bool]:
+        """Update derived screensaver settings."""
+        screensaver_path = (
+            self.device.custom_settings.get("screensaver_dashboard")
+            if self.device.custom_settings
+            else None
+        )
+        if isinstance(screensaver_path, str):
+            screensaver_path = screensaver_path.strip()
+
+        if isinstance(screensaver_path, str) and screensaver_path:
+            if not screensaver_path.startswith("/"):
+                screensaver_path = f"/{screensaver_path}"
+        else:
+            screensaver_path = ""
+
+        ha_navigate_screensaver = bool(
+            self.device.custom_settings.get("screen_saver")
+            if self.device.custom_settings
+            else False
+        ) and bool(screensaver_path)
+
+        assert self.device.custom_settings is not None
+        self.device.custom_settings["ha_screensaver_dashboard"] = screensaver_path
+        self.device.custom_settings["ha_navigate_screensaver"] = (
+            ha_navigate_screensaver
+        )
+        return screensaver_path, ha_navigate_screensaver
+
     async def _connect(self) -> None:
         """Connect to satellite over TCP.  Uses custom TCP client to allow callbacks on send."""
         await self._disconnect()
+        self._last_ui_idle = None
 
         _LOGGER.debug(
             "Connecting VACA to satellite at %s:%s",
@@ -480,15 +501,24 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
     ) -> None:
         """Run when device screen settings change."""
         if self._client is not None and self._client.can_write_event():
+            payload_settings = (
+                dict(self.device.custom_settings)
+                if setting is None
+                else {setting: value}
+            )
+            if setting in {"screen_saver", "screensaver_dashboard"}:
+                screensaver_path, ha_navigate_screensaver = (
+                    self._apply_screensaver_settings()
+                )
+                payload_settings["ha_screensaver_dashboard"] = screensaver_path
+                payload_settings["ha_navigate_screensaver"] = ha_navigate_screensaver
             self.config_entry.async_create_background_task(
                 self.hass,
                 self._client.write_event(
                     CustomEvent(
                         SETTINGS_EVENT_TYPE,
                         {
-                            SETTINGS_EVENT_TYPE: self.device.custom_settings
-                            if setting is None
-                            else {setting: value}
+                            SETTINGS_EVENT_TYPE: payload_settings
                         },
                     ).event()
                 ),

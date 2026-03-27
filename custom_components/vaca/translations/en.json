@@ -249,7 +249,7 @@
         },
         "text": {
             "screensaver_dashboard": {
-                "name": "Screensaver dashboard path"
+                "name": "Screensaver dashboard path (optional)"
             }
         }
     }
