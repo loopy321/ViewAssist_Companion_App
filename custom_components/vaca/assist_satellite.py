@@ -43,6 +43,7 @@ from .custom import (
     PipelineEnded,
     getIntegrationVersion,
     getVADashboardPath,
+    getVASensorEntityId,
 )
 from .devices import VASatelliteDevice
 from .entity import VASatelliteEntity
@@ -225,6 +226,19 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
         if isinstance(current_path, str) and current_path.strip():
             normalized_current_path = self._normalize_path(current_path, "/")
             self._last_current_path = normalized_current_path
+            if va_sensor_entity_id := getVASensorEntityId(
+                self.hass, self.device.satellite_id
+            ):
+                self.hass.async_create_task(
+                    self.hass.services.async_call(
+                        "view_assist",
+                        "set_state",
+                        {
+                            "entity_id": va_sensor_entity_id,
+                            "current_path": normalized_current_path,
+                        },
+                    )
+                )
             screensaver_path = self._normalize_path(
                 self.device.custom_settings.get("ha_screensaver_dashboard")
                 if self.device.custom_settings

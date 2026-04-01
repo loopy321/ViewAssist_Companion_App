@@ -100,30 +100,97 @@ async def getIntegrationVersion(hass: HomeAssistant) -> str | AwesomeVersion | N
 
 
 def getVADashboardPath(hass: HomeAssistant, uuid: str) -> str:
-    """Get the dashboard path."""
-    # Look for VA and a config entry that uses this uuid for display.  Then get the dashboard path
-    # from it or the master entry.  If not set, return empty string
+    """Get the effective View Assist home path for a VACA device."""
+
+    def get_sensor_entity_id(entry) -> str | None:
+        entity_reg = er.async_get(hass)
+        if integration_entities := er.async_entries_for_config_entry(
+            entity_reg, entry.entry_id
+        ):
+            for entity in integration_entities:
+                if entity.domain == "sensor":
+                    return entity.entity_id
+        return None
+
+    def resolve_home(entry) -> str:
+        runtime_data = getattr(entry, "runtime_data", None)
+        if runtime_data is not None:
+            try:
+                runtime_home = getattr(
+                    getattr(runtime_data, "runtime_config_overrides", None),
+                    "home",
+                    None,
+                )
+                if runtime_home:
+                    return runtime_home
+                dashboard_home = getattr(
+                    getattr(runtime_data, "dashboard", None),
+                    "home",
+                    None,
+                )
+                if dashboard_home:
+                    return dashboard_home
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("Unable to read runtime View Assist home: %s", err)
+
+        if sensor_entity_id := get_sensor_entity_id(entry):
+            if sensor_state := hass.states.get(sensor_entity_id):
+                if home_screen := sensor_state.attributes.get("home_screen"):
+                    return home_screen
+
+        if home := entry.options.get("home"):
+            return home
+        return ""
+
+    # Look for the matching View Assist entry that uses this VACA device as mic_device.
+    if entries := hass.config_entries.async_entries(
+        "view_assist", include_disabled=False
+    ):
+        entity_reg = er.async_get(hass)
+        master_entry = next(
+            (entry for entry in entries if entry.data.get("type") == "master_config"),
+            None,
+        )
+        for entry in entries:
+            try:
+                if entry.data["type"] == "vaca":
+                    if mic_device := entry.data.get("mic_device", {}):
+                        if mic_device_entity := entity_reg.async_get(mic_device):
+                            entry_id = mic_device_entity.config_entry_id
+                            if entry_id == uuid:
+                                if home := resolve_home(entry):
+                                    return home
+                                if master_entry and (home := resolve_home(master_entry)):
+                                    return home
+                                return "/view-assist/clock"
+            except Exception as e:  # noqa: BLE001
+                _LOGGER.error("Error getting dashboard path: %s", e)
+                continue
+        if master_entry and (home := resolve_home(master_entry)):
+            return home
+    return "/view-assist/clock"
+
+
+def getVASensorEntityId(hass: HomeAssistant, uuid: str) -> str | None:
+    """Get the linked View Assist sensor entity id for a VACA device."""
     if entries := hass.config_entries.async_entries(
         "view_assist", include_disabled=False
     ):
         entity_reg = er.async_get(hass)
         for entry in entries:
             try:
-                if entry.data["type"] == "vaca":
-                    if mic_device := entry.data.get("mic_device", {}):
-                        # Get device id for this entity
-                        if mic_device_entity := entity_reg.async_get(mic_device):
-                            entry_id = mic_device_entity.config_entry_id
-                            if entry_id == uuid:
-                                if home := entry.options.get("home"):
-                                    return home
-                                # Look for master entry
-                                for master_entry in entries:
-                                    if master_entry.data["type"] == "master_config":
-                                        if home := master_entry.options.get("home"):
-                                            return home
-                                return "view-assist"
-            except Exception as e:  # noqa: BLE001
-                _LOGGER.error("Error getting dashboard path: %s", e)
+                if entry.data["type"] != "vaca":
+                    continue
+                if mic_device := entry.data.get("mic_device", {}):
+                    if mic_device_entity := entity_reg.async_get(mic_device):
+                        if mic_device_entity.config_entry_id == uuid:
+                            if integration_entities := er.async_entries_for_config_entry(
+                                entity_reg, entry.entry_id
+                            ):
+                                for entity in integration_entities:
+                                    if entity.domain == "sensor":
+                                        return entity.entity_id
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.error("Error getting View Assist sensor entity id: %s", err)
                 continue
-    return ""
+    return None
