@@ -34,6 +34,7 @@ class CustomActions(StrEnum):
     MEDIA_STOP = "stop"
     MEDIA_SET_VOLUME = "set-volume"
     REFRESH = "refresh"
+    RESTART_UI = "restart-ui"
     SCREEN_SLEEP = "screen-sleep"
     SCREEN_WAKE = "screen-wake"
     TOAST_MESSAGE = "toast-message"

@@ -37,6 +37,9 @@
             "refresh": {
                 "name": "Yenile"
             },
+            "restart_ui": {
+                "name": "Arayuzu yeniden baslat"
+            },
             "screen_wake": {
                 "name": "Ekranı uyandır"
             },

@@ -40,6 +40,9 @@
             "refresh": {
                 "name": "Aktualisieren"
             },
+            "restart_ui": {
+                "name": "UI neu starten"
+            },
             "screen_wake": {
                 "name": "Bildschirm aufwecken"
             },

@@ -43,6 +43,9 @@
             "refresh": {
                 "name": "Refresh"
             },
+            "restart_ui": {
+                "name": "Restart UI"
+            },
             "screen_wake": {
                 "name": "Wake screen"
             },
