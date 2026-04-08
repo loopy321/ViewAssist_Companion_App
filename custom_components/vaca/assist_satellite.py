@@ -22,6 +22,7 @@ from homeassistant.components.assist_satellite import (
     AssistSatelliteEntityDescription,
     AssistSatelliteEntityFeature,
 )
+from homeassistant.components.assist_satellite.entity import AssistSatelliteState
 from homeassistant.components.wyoming import DomainDataItem, WyomingService
 
 # pylint: disable-next=hass-component-root-import
@@ -122,6 +123,8 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
 
     async def on_restart(self) -> None:
         """Block until pipeline loop will be restarted."""
+        self._attr_state = AssistSatelliteState.IDLE
+        self.async_write_ha_state()
         _LOGGER.warning(
             "Satellite %s has been disconnected. Reconnecting in %s second(s)",
             self.entity_id.replace("assist_satellite.", ""),
@@ -251,6 +254,18 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
             if normalized_current_path == self._pending_non_screensaver_path:
                 self._pending_non_screensaver_path = None
                 self._pending_non_screensaver_until = 0.0
+        elif not self._last_current_path:
+            if seeded_current_path := self._get_seed_current_path():
+                self._last_current_path = seeded_current_path
+                async_dispatcher_send(
+                    self.hass,
+                    f"{DOMAIN}_{self.device.device_id}_status_update",
+                    {"sensors": {"current_path": seeded_current_path}},
+                )
+                _LOGGER.debug(
+                    "Seeded VACA current_path from linked View Assist sensor: %s",
+                    seeded_current_path,
+                )
 
         if "ui_idle" not in sensors:
             return
@@ -335,6 +350,23 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
                     screensaver_path,
                 )
 
+    def _get_seed_current_path(self) -> str | None:
+        """Recover current_path from the linked View Assist sensor when VACA lost it."""
+        va_sensor_entity_id = getVASensorEntityId(self.hass, self.device.satellite_id)
+        if not va_sensor_entity_id:
+            return None
+
+        if not (sensor_state := self.hass.states.get(va_sensor_entity_id)):
+            return None
+
+        candidate = sensor_state.attributes.get("current_path")
+        if not isinstance(candidate, str) or not candidate.strip():
+            candidate = sensor_state.attributes.get("home_screen")
+        if not isinstance(candidate, str) or not candidate.strip():
+            return None
+
+        return self._normalize_path(candidate, "/")
+
     @staticmethod
     def _normalize_path(path: Any, default: str) -> str:
         """Normalize path values from settings."""
@@ -375,6 +407,8 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
     async def _connect(self) -> None:
         """Connect to satellite over TCP.  Uses custom TCP client to allow callbacks on send."""
         await self._disconnect()
+        self._attr_state = AssistSatelliteState.IDLE
+        self.async_write_ha_state()
         self._last_ui_idle = None
         self._last_current_path = None
         self._screensaver_active = False
