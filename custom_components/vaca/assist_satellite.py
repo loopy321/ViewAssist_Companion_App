@@ -299,6 +299,19 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
             "/view-assist/clock",
         )
         current_path = self._last_current_path
+        if not current_path:
+            if seeded_current_path := self._get_seed_current_path():
+                current_path = seeded_current_path
+                self._last_current_path = seeded_current_path
+                async_dispatcher_send(
+                    self.hass,
+                    f"{DOMAIN}_{self.device.device_id}_status_update",
+                    {"sensors": {"current_path": seeded_current_path}},
+                )
+                _LOGGER.debug(
+                    "Recovered VACA current_path during ui_idle handling: %s",
+                    seeded_current_path,
+                )
         on_home_path = bool(current_path) and current_path.startswith(home_path)
         on_screensaver_path = bool(current_path) and current_path.startswith(
             screensaver_path

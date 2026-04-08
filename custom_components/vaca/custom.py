@@ -154,7 +154,7 @@ def getVADashboardPath(hass: HomeAssistant, uuid: str) -> str:
         )
         for entry in entries:
             try:
-                if entry.data["type"] == "vaca":
+                if entry.data["type"] in ("vaca", "view_audio"):
                     if mic_device := entry.data.get("mic_device", {}):
                         if mic_device_entity := entity_reg.async_get(mic_device):
                             entry_id = mic_device_entity.config_entry_id
@@ -180,7 +180,7 @@ def getVASensorEntityId(hass: HomeAssistant, uuid: str) -> str | None:
         entity_reg = er.async_get(hass)
         for entry in entries:
             try:
-                if entry.data["type"] != "vaca":
+                if entry.data["type"] not in ("vaca", "view_audio"):
                     continue
                 if mic_device := entry.data.get("mic_device", {}):
                     if mic_device_entity := entity_reg.async_get(mic_device):
