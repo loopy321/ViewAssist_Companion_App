@@ -34,6 +34,7 @@ async def async_setup_entry(
         [
             WyomingSatelliteWakeButton(device),
             WyomingSatelliteRefreshButton(device),
+            WyomingRestartUIButton(device),
             WyomingScreenSleepButton(device),
             WyomingScreenWakeButton(device),
         ]
@@ -62,6 +63,18 @@ class WyomingSatelliteRefreshButton(VASatelliteEntity, ButtonEntity):
     async def async_press(self) -> None:
         """Press the button."""
         self._device.send_custom_action(CustomActions.REFRESH)
+
+
+class WyomingRestartUIButton(VASatelliteEntity, ButtonEntity):
+    """Entity to perform a full UI restart/recovery."""
+
+    entity_description = ButtonEntityDescription(
+        key="restart_ui", translation_key="restart_ui", icon="mdi:restart"
+    )
+
+    async def async_press(self) -> None:
+        """Press the button."""
+        self._device.send_custom_action(CustomActions.RESTART_UI)
 
 
 class WyomingScreenSleepButton(VASatelliteEntity, ButtonEntity):

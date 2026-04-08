@@ -22,6 +22,7 @@ from homeassistant.components.assist_satellite import (
     AssistSatelliteEntityDescription,
     AssistSatelliteEntityFeature,
 )
+from homeassistant.components.assist_satellite.entity import AssistSatelliteState
 from homeassistant.components.wyoming import DomainDataItem, WyomingService
 
 # pylint: disable-next=hass-component-root-import
@@ -43,6 +44,7 @@ from .custom import (
     PipelineEnded,
     getIntegrationVersion,
     getVADashboardPath,
+    getVASensorEntityId,
 )
 from .devices import VASatelliteDevice
 from .entity import VASatelliteEntity
@@ -113,9 +115,16 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
 
         # stream tts var to allow interupt and cancel remaining response
         self.stream_tts = False
+        self._last_ui_idle: bool | None = None
+        self._last_current_path: str | None = None
+        self._screensaver_active = False
+        self._pending_non_screensaver_path: str | None = None
+        self._pending_non_screensaver_until = 0.0
 
     async def on_restart(self) -> None:
         """Block until pipeline loop will be restarted."""
+        self._attr_state = AssistSatelliteState.IDLE
+        self.async_write_ha_state()
         _LOGGER.warning(
             "Satellite %s has been disconnected. Reconnecting in %s second(s)",
             self.entity_id.replace("assist_satellite.", ""),
@@ -160,6 +169,7 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
                     if self.hass.config.internal_url
                     else ""
                 )
+                self._apply_screensaver_settings()
                 home = getVADashboardPath(self.hass, self.device.satellite_id)
                 self.device.custom_settings["ha_dashboard"] = home.removeprefix("/")
                 # Send config event
@@ -190,6 +200,8 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
                     evt.event_type,
                     evt.event_data,
                 )
+                if evt.event_type == STATUS_EVENT_TYPE and evt.event_data:
+                    self._process_ui_idle_status(evt.event_data)
 
             async_dispatcher_send(
                 self.hass,
@@ -200,9 +212,221 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
 
         return True, event
 
+    @callback
+    def _process_ui_idle_status(self, event_data: dict[str, Any]) -> None:
+        """Map ui_idle status transitions to navigation actions."""
+        sensors = event_data.get("sensors")
+        if not isinstance(sensors, dict):
+            return
+
+        ha_navigate_screensaver = bool(
+            self.device.custom_settings.get("ha_navigate_screensaver")
+            if self.device.custom_settings
+            else False
+        )
+
+        current_path = sensors.get("current_path")
+        if isinstance(current_path, str) and current_path.strip():
+            normalized_current_path = self._normalize_path(current_path, "/")
+            self._last_current_path = normalized_current_path
+            if va_sensor_entity_id := getVASensorEntityId(
+                self.hass, self.device.satellite_id
+            ):
+                self.hass.async_create_task(
+                    self.hass.services.async_call(
+                        "view_assist",
+                        "set_state",
+                        {
+                            "entity_id": va_sensor_entity_id,
+                            "current_path": normalized_current_path,
+                        },
+                    )
+                )
+            screensaver_path = self._normalize_path(
+                self.device.custom_settings.get("ha_screensaver_dashboard")
+                if self.device.custom_settings
+                else None,
+                "/dashboard-screensaver",
+            )
+            self._screensaver_active = normalized_current_path.startswith(
+                screensaver_path
+            )
+            if normalized_current_path == self._pending_non_screensaver_path:
+                self._pending_non_screensaver_path = None
+                self._pending_non_screensaver_until = 0.0
+        elif not self._last_current_path:
+            if seeded_current_path := self._get_seed_current_path():
+                self._last_current_path = seeded_current_path
+                async_dispatcher_send(
+                    self.hass,
+                    f"{DOMAIN}_{self.device.device_id}_status_update",
+                    {"sensors": {"current_path": seeded_current_path}},
+                )
+                _LOGGER.debug(
+                    "Seeded VACA current_path from linked View Assist sensor: %s",
+                    seeded_current_path,
+                )
+
+        if "ui_idle" not in sensors:
+            return
+
+        ui_idle = bool(sensors["ui_idle"])
+        if not ha_navigate_screensaver:
+            self._last_ui_idle = ui_idle
+            _LOGGER.debug(
+                "Ignoring ui_idle=%s because ha_navigate_screensaver is disabled",
+                ui_idle,
+            )
+            return
+
+        previous = self._last_ui_idle
+        self._last_ui_idle = ui_idle
+
+        # Only act on transitions.
+        if previous is ui_idle:
+            return
+
+        screensaver_path = self._normalize_path(
+            self.device.custom_settings.get("ha_screensaver_dashboard")
+            if self.device.custom_settings
+            else None,
+            "/dashboard-screensaver",
+        )
+        home_path = self._normalize_path(
+            self.device.custom_settings.get("ha_dashboard")
+            if self.device.custom_settings
+            else None,
+            "/view-assist/clock",
+        )
+        current_path = self._last_current_path
+        if not current_path:
+            if seeded_current_path := self._get_seed_current_path():
+                current_path = seeded_current_path
+                self._last_current_path = seeded_current_path
+                async_dispatcher_send(
+                    self.hass,
+                    f"{DOMAIN}_{self.device.device_id}_status_update",
+                    {"sensors": {"current_path": seeded_current_path}},
+                )
+                _LOGGER.debug(
+                    "Recovered VACA current_path during ui_idle handling: %s",
+                    seeded_current_path,
+                )
+        on_home_path = bool(current_path) and current_path.startswith(home_path)
+        on_screensaver_path = bool(current_path) and current_path.startswith(
+            screensaver_path
+        )
+
+        if ui_idle:
+            if on_home_path:
+                _LOGGER.debug(
+                    "ui_idle transition false->true on home path %s, navigating to screensaver: %s",
+                    home_path,
+                    screensaver_path,
+                )
+                self._screensaver_active = True
+                self._send_custom_action(
+                    "navigate",
+                    {"path": screensaver_path, "revert_timeout": 0},
+                )
+            else:
+                _LOGGER.debug(
+                    "ui_idle transition false->true ignored because current_path=%s is not home_path=%s",
+                    current_path,
+                    home_path,
+                )
+        elif previous is True:
+            if (
+                self._pending_non_screensaver_path
+                and time.monotonic() < self._pending_non_screensaver_until
+            ):
+                _LOGGER.debug(
+                    "ui_idle transition true->false ignored due to pending navigation to %s",
+                    self._pending_non_screensaver_path,
+                )
+                return
+            if self._screensaver_active or on_screensaver_path:
+                _LOGGER.debug(
+                    "ui_idle transition true->false from screensaver, waking and navigating home: %s",
+                    home_path,
+                )
+                self._screensaver_active = False
+                self._send_custom_action("screen-wake", None)
+                self._send_custom_action(
+                    "navigate",
+                    {"path": home_path, "revert_timeout": 0},
+                )
+            else:
+                _LOGGER.debug(
+                    "ui_idle transition true->false ignored because current_path=%s is not screensaver_path=%s",
+                    current_path,
+                    screensaver_path,
+                )
+
+    def _get_seed_current_path(self) -> str | None:
+        """Recover current_path from the linked View Assist sensor when VACA lost it."""
+        va_sensor_entity_id = getVASensorEntityId(self.hass, self.device.satellite_id)
+        if not va_sensor_entity_id:
+            return None
+
+        if not (sensor_state := self.hass.states.get(va_sensor_entity_id)):
+            return None
+
+        candidate = sensor_state.attributes.get("current_path")
+        if not isinstance(candidate, str) or not candidate.strip():
+            candidate = sensor_state.attributes.get("home_screen")
+        if not isinstance(candidate, str) or not candidate.strip():
+            return None
+
+        return self._normalize_path(candidate, "/")
+
+    @staticmethod
+    def _normalize_path(path: Any, default: str) -> str:
+        """Normalize path values from settings."""
+        if not isinstance(path, str) or not path.strip():
+            return default
+        path = path.strip()
+        return path if path.startswith("/") else f"/{path}"
+
+    def _apply_screensaver_settings(self) -> tuple[str, bool]:
+        """Update derived screensaver settings."""
+        screensaver_path = (
+            self.device.custom_settings.get("screensaver_dashboard")
+            if self.device.custom_settings
+            else None
+        )
+        if isinstance(screensaver_path, str):
+            screensaver_path = screensaver_path.strip()
+
+        if isinstance(screensaver_path, str) and screensaver_path:
+            if not screensaver_path.startswith("/"):
+                screensaver_path = f"/{screensaver_path}"
+        else:
+            screensaver_path = ""
+
+        ha_navigate_screensaver = bool(
+            self.device.custom_settings.get("screen_saver")
+            if self.device.custom_settings
+            else False
+        ) and bool(screensaver_path)
+
+        assert self.device.custom_settings is not None
+        self.device.custom_settings["ha_screensaver_dashboard"] = screensaver_path
+        self.device.custom_settings["ha_navigate_screensaver"] = (
+            ha_navigate_screensaver
+        )
+        return screensaver_path, ha_navigate_screensaver
+
     async def _connect(self) -> None:
         """Connect to satellite over TCP.  Uses custom TCP client to allow callbacks on send."""
         await self._disconnect()
+        self._attr_state = AssistSatelliteState.IDLE
+        self.async_write_ha_state()
+        self._last_ui_idle = None
+        self._last_current_path = None
+        self._screensaver_active = False
+        self._pending_non_screensaver_path = None
+        self._pending_non_screensaver_until = 0.0
 
         _LOGGER.debug(
             "Connecting VACA to satellite at %s:%s",
@@ -411,25 +635,53 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
     ) -> None:
         """Run when device screen settings change."""
         if self._client is not None and self._client.can_write_event():
+            payload_settings = (
+                dict(self.device.custom_settings)
+                if setting is None
+                else {setting: value}
+            )
+            if setting in {"screen_saver", "screensaver_dashboard"}:
+                screensaver_path, ha_navigate_screensaver = (
+                    self._apply_screensaver_settings()
+                )
+                payload_settings["ha_screensaver_dashboard"] = screensaver_path
+                payload_settings["ha_navigate_screensaver"] = ha_navigate_screensaver
             self.config_entry.async_create_background_task(
                 self.hass,
                 self._client.write_event(
                     CustomEvent(
                         SETTINGS_EVENT_TYPE,
                         {
-                            SETTINGS_EVENT_TYPE: self.device.custom_settings
-                            if setting is None
-                            else {setting: value}
+                            SETTINGS_EVENT_TYPE: payload_settings
                         },
                     ).event()
                 ),
                 "custom settings event",
             )
 
-    def _send_custom_action(
-        self, command: str, payload: str | float | None = None
-    ) -> None:
+    def _send_custom_action(self, command: str, payload: Any = None) -> None:
         """Send a media player command to the satellite."""
+        if command == "navigate" and isinstance(payload, dict):
+            path = payload.get("path")
+            if isinstance(path, str) and path.strip():
+                normalized_path = self._normalize_path(path, "/")
+                screensaver_path = self._normalize_path(
+                    self.device.custom_settings.get("ha_screensaver_dashboard")
+                    if self.device.custom_settings
+                    else None,
+                    "/dashboard-screensaver",
+                )
+                if not normalized_path.startswith(screensaver_path):
+                    self._pending_non_screensaver_path = normalized_path
+                    self._pending_non_screensaver_until = time.monotonic() + 5.0
+                else:
+                    self._pending_non_screensaver_path = None
+                    self._pending_non_screensaver_until = 0.0
+        _LOGGER.debug(
+            "Sending custom action to satellite: command=%s payload=%s",
+            command,
+            payload,
+        )
         if self._client is not None and self._client.can_write_event():
             self.config_entry.async_create_background_task(
                 self.hass,

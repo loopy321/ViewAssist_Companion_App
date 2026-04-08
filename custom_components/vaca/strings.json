@@ -28,6 +28,9 @@
     "binary_sensor": {
       "assist_in_progress": {
         "name": "[%key:component::assist_pipeline::entity::binary_sensor::assist_in_progress::name%]"
+      },
+      "ui_idle": {
+        "name": "UI idle"
       }
     },
     "select": {
@@ -73,6 +76,11 @@
       },
       "raw_proximity_threshold": {
         "name": "Raw proximity threshold"
+      }
+    },
+    "text": {
+      "screensaver_dashboard": {
+        "name": "Screensaver dashboard path (optional)"
       }
     }
   }

@@ -32,6 +32,9 @@
             "screen_on": {
                 "name": "Screen"
             },
+            "ui_idle": {
+                "name": "UI idle"
+            },
             "motion_detected": {
                 "name": "Motion"
             }
@@ -39,6 +42,9 @@
         "button": {
             "refresh": {
                 "name": "Refresh"
+            },
+            "restart_ui": {
+                "name": "Restart UI"
             },
             "screen_wake": {
                 "name": "Wake screen"
@@ -242,6 +248,11 @@
             },
             "screen_saver": {
                 "name": "Screen saver"
+            }
+        },
+        "text": {
+            "screensaver_dashboard": {
+                "name": "Screensaver dashboard path (optional)"
             }
         }
     }

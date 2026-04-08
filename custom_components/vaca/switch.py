@@ -260,7 +260,7 @@ class WyomingSatelliteContinueConversationSwitch(BaseSwitch):
         icon="mdi:message-bulleted",
         entity_category=EntityCategory.CONFIG,
     )
-    default_on = True
+    default_on = False
 
 
 class WyomingSatelliteAlarmSwitch(BaseFeedbackSwitch):
