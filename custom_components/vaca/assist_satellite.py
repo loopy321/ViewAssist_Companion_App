@@ -33,12 +33,12 @@ from .client import VAAsyncTcpClient
 from .const import DOMAIN, MIN_APK_VERSION, SAMPLE_CHANNELS, SAMPLE_WIDTH
 from .custom import (
     ACTION_EVENT_TYPE,
-    CAPABILITIES_EVENT_TYPE,
     SETTINGS_EVENT_TYPE,
     STATUS_EVENT_TYPE,
     Capabilities,
     CustomEvent,
     PipelineEnded,
+    get_custom_files_data,
     getIntegrationVersion,
     getVADashboardPath,
 )
@@ -158,7 +158,7 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
                 )
                 home = getVADashboardPath(self.hass, self.device.satellite_id)
                 self.device.custom_settings["ha_dashboard"] = home.removeprefix("/")
-                # Send config event
+            # Send config event
             self._custom_settings_changed()
 
     @callback
@@ -224,6 +224,14 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
         updating listeners for speech-to-text and text-to-speech outputs.
         MSP - Added by MSP1974 2025-07-08
         """
+        if event.type == assist_pipeline.PipelineEventType.RUN_START:
+            if event.data and (tts_output := event.data.get("tts_output")):
+                # Get stream token early.
+                # If "tts_start_streaming" is True in INTENT_PROGRESS event, we
+                # can start streaming TTS before the TTS_END event.
+                self._tts_stream_token = tts_output["token"]
+                self._is_tts_streaming = False
+            return
         if event.type == assist_pipeline.PipelineEventType.RUN_END:
             # Pipeline ended
             if self._client is not None:
