@@ -3,19 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import logging
-import time
 from typing import Any, Final
-import wave
 
 from wyoming.audio import AudioChunk, AudioStart, AudioStop
 from wyoming.event import Event
+from wyoming.handle import Handled
 from wyoming.info import Describe
 from wyoming.pipeline import PipelineStage, RunPipeline
 from wyoming.satellite import RunSatellite
 
-from homeassistant.components import assist_pipeline, ffmpeg, intent, tts
+from homeassistant.components import assist_pipeline, ffmpeg, intent
 from homeassistant.components.assist_pipeline import PipelineEvent
 from homeassistant.components.assist_satellite import (
     AssistSatelliteAnnouncement,
@@ -156,9 +154,7 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
                     self.hass.config.api.port if self.hass.config.api else 8123
                 )
                 self.device.custom_settings["ha_url"] = (
-                    self.hass.config.internal_url
-                    if self.hass.config.internal_url
-                    else ""
+                    self.hass.config.internal_url or ""
                 )
                 home = getVADashboardPath(self.hass, self.device.satellite_id)
                 self.device.custom_settings["ha_dashboard"] = home.removeprefix("/")
@@ -251,24 +247,26 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
                     self.device.tts_listener(event.data["tts_input"])
         elif event.type == assist_pipeline.PipelineEventType.INTENT_END:
             # Intent processing complete - update intent sensor
-            if event.data:
-                _LOGGER.debug(
-                    "Intent %s complete: %s",
-                    event.type,
-                    event.data,
+            # Remove speech slots as can contain datetime which will not transform to json
+            event_data = event.data.copy() if event.data else {}
+            if (
+                event_data.get("intent_output", {})
+                .get("response", {})
+                .get("speech_slots")
+            ):
+                event_data["intent_output"]["response"].pop("speech_slots")
+
+            if event_data:
+                _LOGGER.debug("Intent %s complete: %s", event.type, event_data)
+                # Update client with intent output structure
+                self.config_entry.async_create_background_task(
+                    self.hass,
+                    self._client.write_event(
+                        Handled(text=event.type, context=event_data).event(),
+                    ),
+                    f"{self.entity_id} {event.type}",
                 )
-                if self._client is not None:
-                    # Update client with intent output structure
-                    self.config_entry.async_create_background_task(
-                        self.hass,
-                        self._client.write_event(
-                            CustomEvent(
-                                ACTION_EVENT_TYPE,
-                                {"action": "intent-output", "data": event.data},
-                            ).event()
-                        ),
-                        "send intent output event",
-                    )
+
                 if (
                     event.data.get("intent_output", {})
                     .get("response", {})
