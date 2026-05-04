@@ -11,7 +11,7 @@ from wyoming.info import Describe, Info
 from homeassistant.components.wyoming.error import WyomingError
 from homeassistant.const import Platform
 
-from .custom import Capabilities
+from .custom import Capabilities, CustomEvent
 
 _INFO_TIMEOUT = 2
 _INFO_RETRY_WAIT = 2
@@ -143,9 +143,18 @@ async def load_wyoming_info(
                             capabilities = Capabilities.from_event(event)
                             break  # while
 
+                        if CustomEvent.is_type(event.type):
+                            # Custom events may contain capabilities updates, so check for those and update if needed.
+                            custom_event = CustomEvent.from_event(event)
+                            if custom_event.event_type == "capabilities":
+                                capabilities = Capabilities(
+                                    data=custom_event.event_data.get("capabilities", {})
+                                )
+                                break
+
                     if capabilities is not None:
                         break  # for
-        except TimeoutError, OSError, WyomingError:
+        except (TimeoutError, OSError, WyomingError):
             # Sleep and try again
             await asyncio.sleep(retry_wait)
 
