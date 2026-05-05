@@ -84,6 +84,12 @@
             },
             "zoom_level": {
                 "name": "Zoomstufe"
+            },
+            "text_size": {
+                "name": "Textgröße"
+            },
+            "raw_proximity_threshold": {
+                "name": "Annäherungsschwellenwert"
             }
         },
         "select": {

@@ -85,6 +85,9 @@
             "zoom_level": {
                 "name": "Zoom level"
             },
+            "text_size": {
+                "name": "Text size"
+            },
             "raw_proximity_threshold": {
               "name": "Proximity threshold"
             },

@@ -81,6 +81,12 @@
             },
             "zoom_level": {
                 "name": "Yakınlaştırma seviyesi"
+            },
+            "text_size": {
+                "name": "Metin boyutu"
+            },
+            "raw_proximity_threshold": {
+                "name": "Yakınlık eşiği"
             }
         },
         "select": {
