@@ -274,6 +274,7 @@ class WyomingSatelliteWakeWordThresholdNumber(VASatelliteEntity, RestoreNumber):
     _attr_native_min_value = 0
     _attr_native_max_value = 10
     _attr_native_value = 6
+    _attr_native_step = 0.1
 
     async def async_added_to_hass(self) -> None:
         """When entity is added to Home Assistant."""
@@ -285,10 +286,11 @@ class WyomingSatelliteWakeWordThresholdNumber(VASatelliteEntity, RestoreNumber):
 
     async def async_set_native_value(self, value: float) -> None:
         """Set new value."""
-        value = int(max(0, min(10, value)))
-        self._attr_native_value = value
+        self._attr_native_value = max(0, min(10, value))
         self.async_write_ha_state()
-        self._device.set_custom_setting(self.entity_description.key, value)
+        self._device.set_custom_setting(
+            self.entity_description.key, self._attr_native_value
+        )
 
 
 class WyomingSatelliteZoomLevelNumber(VASatelliteEntity, RestoreNumber):
