@@ -408,7 +408,7 @@ class ViewAssistSatelliteEntity(WyomingAssistSatellite, VASatelliteEntity):
         self._run_pipeline_once(
             RunPipeline(
                 start_stage=PipelineStage.ASR,
-                end_stage=PipelineStage.ASR,
+                end_stage=PipelineStage.TTS,
                 restart_on_end=False,
             )
         )
